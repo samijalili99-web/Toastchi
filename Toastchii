@@ -1,0 +1,171 @@
+/* Testchi Sandwich Builder */
+const state = {
+  catalog: [], // from items.json
+  selected: new Map(), // id -> item
+  currency: "تومان"
+};
+
+async function loadCatalog(){
+  const res = await fetch('items.json');
+  const data = await res.json();
+  state.catalog = data.items;
+  state.currency = data.currency || state.currency;
+  document.getElementById('currency').textContent = state.currency;
+  renderItemsList();
+  restoreFromLocal();
+}
+
+function fmtPrice(n){
+  const nf = new Intl.NumberFormat('fa-IR');
+  return nf.format(n || 0);
+}
+
+function renderItemsList(filter='all'){
+  const list = document.getElementById('itemsList');
+  list.innerHTML='';
+  const items = state.catalog.filter(i=> filter==='all' ? true : i.category===filter);
+  items.sort((a,b)=> (a.layer??0)-(b.layer??0));
+  for(const item of items){
+    const li = document.createElement('li');
+    li.className='item';
+    li.setAttribute('role','button');
+    li.setAttribute('aria-pressed', state.selected.has(item.id) ? 'true' : 'false');
+    li.dataset.id = item.id;
+    li.addEventListener('click', ()=> toggleItem(item.id));
+    const img = document.createElement('img');
+    img.src = item.image;
+    img.alt = item.name;
+    const name = document.createElement('div');
+    name.className='name';
+    name.textContent = item.name;
+    const price = document.createElement('div');
+    price.className='price';
+    price.textContent = item.price ? (fmtPrice(item.price)+' '+state.currency) : '—';
+    li.append(img,name,price);
+    list.appendChild(li);
+  }
+}
+
+function toggleItem(id){
+  const item = state.catalog.find(x=>x.id===id);
+  if(!item) return;
+  if(state.selected.has(id)){
+    state.selected.delete(id);
+  }else{
+    // Bread top/bottom mutually exclusive duplicates? Allow both but only one of each
+    state.selected.set(id, item);
+  }
+  renderLayers();
+  renderSelectedTags();
+  updatePrice();
+  persistToLocal();
+  // Reflect pressed state in list
+  const btn = document.querySelector(`.item[data-id="${id}"]`);
+  if(btn){ btn.setAttribute('aria-pressed', state.selected.has(id) ? 'true':'false'); }
+  document.getElementById('checkoutBtn').disabled = state.selected.size===0;
+}
+
+function renderSelectedTags(){
+  const wrap = document.getElementById('selectedList');
+  wrap.innerHTML='';
+  for(const [id, item] of [...state.selected.entries()].sort((a,b)=>(a[1].layer??0)-(b[1].layer??0))){
+    const span = document.createElement('span');
+    span.className='tag';
+    span.textContent = item.name;
+    span.title = 'برای حذف کلیک کنید';
+    span.addEventListener('click', ()=> toggleItem(id));
+    wrap.appendChild(span);
+  }
+}
+
+function renderLayers(){
+  const layers = document.getElementById('layers');
+  layers.innerHTML='';
+  const items = [...state.selected.values()].sort((a,b)=> (a.layer??0)-(b.layer??0));
+  for(const it of items){
+    const img = document.createElement('img');
+    img.src = it.image;
+    img.alt = it.name;
+    img.className = 'layer' + (it.position==='drizzle' ? ' drizzle' : '');
+    img.style.zIndex = (it.layer ?? 1).toString();
+    layers.appendChild(img);
+  }
+}
+
+function updatePrice(){
+  let total = 0;
+  for(const it of state.selected.values()){
+    total += +it.price || 0;
+  }
+  document.getElementById('priceValue').textContent = fmtPrice(total);
+}
+
+function persistToLocal(){
+  const data = { selected: [...state.selected.keys()] };
+  localStorage.setItem('testchi_selected', JSON.stringify(data));
+}
+
+function restoreFromLocal(){
+  try{
+    const raw = localStorage.getItem('testchi_selected');
+    if(!raw) return;
+    const data = JSON.parse(raw);
+    if(Array.isArray(data.selected)){
+      for(const id of data.selected){
+        const item = state.catalog.find(x=>x.id===id);
+        if(item){ state.selected.set(id,item); }
+      }
+      renderLayers();
+      renderSelectedTags();
+      updatePrice();
+      document.getElementById('checkoutBtn').disabled = state.selected.size===0;
+      // reflect pressed list
+      for(const id of data.selected){
+        const btn = document.querySelector(`.item[data-id="${id}"]`);
+        if(btn){ btn.setAttribute('aria-pressed','true'); }
+      }
+    }
+  }catch(e){ /* ignore */ }
+}
+
+function setupFilters(){
+  const cont = document.getElementById('filters');
+  cont.addEventListener('click', (e)=>{
+    const btn = e.target.closest('button[data-cat]');
+    if(!btn) return;
+    cont.querySelectorAll('.chip').forEach(c=>c.classList.remove('active'));
+    btn.classList.add('active');
+    const cat = btn.dataset.cat;
+    renderItemsList(cat);
+  });
+}
+
+function setupActions(){
+  document.getElementById('resetBtn').addEventListener('click', ()=>{
+    state.selected.clear();
+    renderLayers();
+    renderSelectedTags();
+    updatePrice();
+    persistToLocal();
+    document.querySelectorAll('.item[aria-pressed="true"]').forEach(el=>el.setAttribute('aria-pressed','false'));
+    document.getElementById('checkoutBtn').disabled = true;
+  });
+  const helpDialog = document.getElementById('helpDialog');
+  document.getElementById('helpBtn').addEventListener('click', ()=> helpDialog.showModal());
+  document.getElementById('checkoutBtn').addEventListener('click', ()=>{
+    // Save summary then redirect to checkout.html
+    const payload = {
+      items: [...state.selected.values()].map(x=>({id:x.id,name:x.name,price:x.price})),
+      total: [...state.selected.values()].reduce((s,x)=> s+(+x.price||0), 0),
+      currency: state.currency
+    };
+    localStorage.setItem('testchi_order', JSON.stringify(payload));
+    window.location.href = 'checkout.html';
+  });
+}
+
+window.addEventListener('DOMContentLoaded', ()=>{
+  setupFilters();
+  setupActions();
+  loadCatalog();
+});
